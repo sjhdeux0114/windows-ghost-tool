@@ -5,6 +5,11 @@ $JobDirectory=$testRoot
 [void][IO.Directory]::CreateDirectory($testRoot)
 function Assert($condition,$message) { if (-not $condition) { throw $message } }
 try {
+    . (Join-Path $PSScriptRoot '..\GuestSeal.ps1') -ValidateOnly
+    Assert (Test-AuditReady 0 1 $true 'IMAGE_STATE_SPECIALIZE_RESEAL_TO_AUDIT') 'Audit mode must not wait forever on OOBEInProgress=1'
+    Assert (-not (Test-AuditReady 1 1 $true 'IMAGE_STATE_SPECIALIZE_RESEAL_TO_AUDIT')) 'Active setup accepted'
+    Assert (-not (Test-AuditReady 0 1 $true 'IMAGE_STATE_UNDEPLOYABLE')) 'Incomplete OOBE accepted'
+    Assert (-not (Test-AuditReady 0 1 $false 'IMAGE_STATE_SPECIALIZE_RESEAL_TO_AUDIT')) 'Missing desktop accepted'
     $script:logPath=Join-Path $testRoot 'native.log'
     $nativeTest=Join-Path $testRoot 'native-test.cmd'
     Set-Content -LiteralPath $nativeTest -Value "@echo off`r`necho diagnostic-on-stderr 1>&2`r`necho final-output`r`nexit /b 7" -Encoding ASCII

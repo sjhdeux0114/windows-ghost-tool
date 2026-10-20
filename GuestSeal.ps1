@@ -1,7 +1,12 @@
-﻿# Runs only inside the brand-new reference VM, via an independent SYSTEM task.
+﻿param([switch]$ValidateOnly)
+# Runs only inside the brand-new reference VM, via an independent SYSTEM task.
 # Compatible with Windows 7's PowerShell 2.0.
 $ErrorActionPreference='Stop'
 function Note($s) { Add-Content -LiteralPath 'C:\GhostBuild\seal.log' -Value ((Get-Date -Format s)+' '+$s) }
+function Test-AuditReady($setupInProgress,$oobeInProgress,[bool]$desktop,[string]$imageState) {
+    return ($setupInProgress -eq 0 -and $desktop -and ($oobeInProgress -eq 0 -or $imageState -eq 'IMAGE_STATE_SPECIALIZE_RESEAL_TO_AUDIT'))
+}
+if ($ValidateOnly) { return }
 try {
     if (-not (Test-Path -LiteralPath 'C:\GhostBuild\Architecture.txt')) { throw 'Missing reference VM marker.' }
     Note 'Waiting for audit setup to finish.'
@@ -11,7 +16,8 @@ try {
     while ($stable -lt 6) {
         if ((Get-Date) -gt $deadline) { throw 'Audit setup timed out.' }
         $s=Get-ItemProperty 'HKLM:\SYSTEM\Setup'
-        if ($s.SystemSetupInProgress -eq 0 -and $s.OOBEInProgress -eq 0 -and (Get-Process explorer -ErrorAction SilentlyContinue)) { $stable++ } else { $stable=0 }
+        $imageState=(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State').ImageState
+        if (Test-AuditReady $s.SystemSetupInProgress $s.OOBEInProgress ([bool](Get-Process explorer -ErrorAction SilentlyContinue)) $imageState) { $stable++ } else { $stable=0 }
         if (($ticks % 6) -eq 0) { Note ('Setup wait: SystemSetupInProgress='+$s.SystemSetupInProgress+'; OOBEInProgress='+$s.OOBEInProgress+'; stable='+$stable) }
         $ticks++
         Start-Sleep -Seconds 10
