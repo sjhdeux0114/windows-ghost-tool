@@ -133,6 +133,22 @@ function New-SealTaskXml {
 </Task>
 '@
 }
+function New-SealBootstrap {
+    return @'
+$ErrorActionPreference='Stop'
+$deadline=(Get-Date).AddSeconds(20)
+while((Get-Date) -lt $deadline) {
+    if(Test-Path 'C:\GhostBuild\seal.log'){exit 0}
+    Start-Sleep -Seconds 2
+}
+try {
+    $command='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\GhostBuild\Seal.ps1'
+    $result=([wmiclass]'Win32_Process').Create($command)
+    Add-Content 'C:\GhostBuild\bootstrap.log' ((Get-Date -Format s)+' Independent worker launch: '+$result.ReturnValue+' PID='+$result.ProcessId)
+    if($result.ReturnValue -ne 0){exit 1}
+} catch {Add-Content 'C:\GhostBuild\bootstrap.log' $_.Exception.Message;exit 1}
+'@
+}
 function Convert-FixedVhdToFlat([string]$path,[long]$expectedSize) {
     Assert-JobPath $path
     $f=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
@@ -333,7 +349,9 @@ try {
     [IO.File]::WriteAllText((Join-Path $guestFolder 'SealTask.xml'),(New-SealTaskXml),[Text.Encoding]::Unicode)
     $runSeal='@echo off'+"`r`n"+'echo %date% %time% Launching seal script >> C:\GhostBuild\launcher.log'+"`r`n"+'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\GhostBuild\Seal.ps1 >> C:\GhostBuild\launcher.log 2>&1'+"`r`n"+'exit /b %errorlevel%'+"`r`n"
     [IO.File]::WriteAllText((Join-Path $guestFolder 'RunSeal.cmd'),$runSeal,[Text.Encoding]::ASCII)
+    [IO.File]::WriteAllText((Join-Path $guestFolder 'BootstrapSeal.ps1'),(New-SealBootstrap),[Text.Encoding]::ASCII)
     $startSeal='@echo off'+"`r`n"+'schtasks.exe /Create /TN GhostAutoSeal /XML C:\GhostBuild\SealTask.xml /F >> C:\GhostBuild\task-start.log 2>&1'+"`r`n"+'if errorlevel 1 exit /b 1'+"`r`n"+'schtasks.exe /Run /TN GhostAutoSeal >> C:\GhostBuild\task-start.log 2>&1'+"`r`n"+'exit /b %errorlevel%'+"`r`n"
+    $startSeal=$startSeal.Replace('exit /b %errorlevel%','C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\GhostBuild\BootstrapSeal.ps1')
     [IO.File]::WriteAllText((Join-Path $guestFolder 'StartSeal.cmd'),$startSeal,[Text.Encoding]::ASCII)
     $answer=$null
     Dismount-VHD -Path $vhdPath; $mounted=$false
@@ -359,6 +377,7 @@ try {
     }
     $deadline=(Get-Date).AddMinutes(120)
     while ((Get-VM -Id $vm.Id).State -ne 'Off') {
+        if(Test-Path -LiteralPath (Join-Path $JobDirectory 'cancel-requested.txt')){throw '사용자가 작업을 중단했습니다.'}
         if ((Get-Date) -gt $deadline) { throw '설치/Sysprep 시간 초과. Hyper-V에서 VM과 C:\GhostBuild\seal.log를 확인하세요. 강제 종료하거나 캡처하지 않습니다.' }
         Write-Stage 'Windows 자동 설치 / Sysprep / VM 정상 종료 대기 중...'; Start-Sleep -Seconds 15
     }
@@ -366,6 +385,7 @@ try {
     $drives=@(Get-VMHardDiskDrive -VM $vm)
     if ($drives.Count -ne 1 -or $drives[0].Path -ne $vhdPath) { throw 'VM 디스크 구성이 변경되었습니다.' }
     Write-Stage 'VM 종료 확인. Windows 내부의 일반화 완료 상태를 검사합니다.'
+    if(Test-Path -LiteralPath (Join-Path $JobDirectory 'cancel-requested.txt')){throw '사용자가 작업을 중단했습니다. 캡처하지 않습니다.'}
     Mount-VHD -Path $vhdPath -ReadOnly -NoDriveLetter | Out-Null; $mounted=$true
     $disk=Get-OwnedDisk $vhdPath
     $osPart=@($disk | Get-Partition | Where-Object { $_.Size -gt 10GB })
@@ -393,6 +413,7 @@ try {
     [IO.File]::WriteAllText($descriptor,(New-VmdkDescriptor $diskSize 'capture-flat.vmdk'),[Text.Encoding]::ASCII)
     $output=$OutputPath
     Write-Stage 'Ghost 이미지 생성 중. 원본은 작업용 VMDK 파일이며 호스트 물리 디스크 번호는 사용하지 않습니다.'
+    if(Test-Path -LiteralPath (Join-Path $JobDirectory 'cancel-requested.txt')){throw '사용자가 작업을 중단했습니다. 캡처하지 않습니다.'}
     Invoke-GhostCapture $ghost $descriptor $output
     # Only disposable generated conversion files are removed, and only after successful verification.
     Assert-JobPath $flat; Remove-Item -LiteralPath $flat

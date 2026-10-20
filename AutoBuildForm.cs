@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Management;
+using System.ComponentModel;
+using System.Text;
 using System.Windows.Forms;
 
 class AutoBuildForm : Form {
@@ -10,6 +12,7 @@ class AutoBuildForm : Form {
     string jobPath, isoPath, selectedOutput, familyOverride="Auto"; Process worker; Timer poll=new Timer();
     TextBox output=new TextBox(); Label status=new Label(); Button open=new Button();
     bool finished=false; long lastLength=-1;
+    bool stopping=false; Button stop=new Button();
     int memoryGB=8, processorCount=4;
     readonly object launcherLock=new object(); string launcherLog;
     public AutoBuildForm() {
@@ -21,6 +24,7 @@ class AutoBuildForm : Form {
         output.SetBounds(20,90,860,425); output.Anchor=AnchorStyles.Left|AnchorStyles.Right|AnchorStyles.Top|AnchorStyles.Bottom; Controls.Add(output);
         open.Text="결과 / 로그 폴더 열기"; open.SetBounds(20,540,230,38); open.Anchor=AnchorStyles.Left|AnchorStyles.Bottom; open.Enabled=false; Controls.Add(open);
         open.Click+=delegate { if(Directory.Exists(jobPath)) Process.Start(new ProcessStartInfo(jobPath){UseShellExecute=true}); };
+        stop.Text="강제 중단"; stop.SetBounds(270,540,150,38); stop.Anchor=AnchorStyles.Left|AnchorStyles.Bottom; stop.Enabled=false; stop.Click+=delegate { StopBuild(); }; Controls.Add(stop);
         Button close=new Button { Text="닫기" }; close.SetBounds(760,540,120,38); close.Anchor=AnchorStyles.Right|AnchorStyles.Bottom; Controls.Add(close); close.Click+=delegate { Close(); };
         poll.Interval=1000; poll.Tick+=delegate { PollWorker(); };
         Shown+=delegate { BeginBuild(); };
@@ -58,10 +62,12 @@ class AutoBuildForm : Form {
             worker.ErrorDataReceived+=delegate(object sender,DataReceivedEventArgs e) { RecordLauncher(e.Data); };
             worker.Start(); worker.BeginOutputReadLine(); worker.BeginErrorReadLine();
             finished=false; lastLength=-1; output.Clear();
+            stop.Enabled=true;
             status.Text="ISO의 Windows 버전 자동 판별 → Windows 설치 → Sysprep → GHO 생성\nWindows 7: BIOS / Windows 10·11 x64: UEFI · 새 VM만 사용합니다.";
             poll.Start();
     }
     void PollWorker() {
+        if(stopping) return;
         try {
             string log=Path.Combine(jobPath,"build.log");
             if(File.Exists(log)) {
@@ -72,7 +78,7 @@ class AutoBuildForm : Form {
             }
             if(worker==null||!worker.HasExited) return;
             worker.WaitForExit();
-            poll.Stop(); finished=true;
+            poll.Stop(); finished=true; stop.Enabled=false;
             if(worker.ExitCode==20) {
                 string family=ChooseFamily();
                 if(family!=null) { familyOverride=family; worker.Dispose(); worker=null; StartWorker(Path.Combine(basePath,"AutoBuild.ps1")); return; }
@@ -86,6 +92,27 @@ class AutoBuildForm : Form {
     void RecordLauncher(string line) {
         if(line==null) return;
         try { lock(launcherLock) { File.AppendAllText(launcherLog,DateTime.Now.ToString("o")+" "+line+Environment.NewLine); } } catch(IOException) { }
+    }
+    void StopBuild() {
+        if(stopping||finished||worker==null)return;
+        if(MessageBox.Show(this,"현재 빌드와 해당 가상 Windows를 강제로 중단할까요?\n미완성 VM·이미지는 사용할 수 없으며 작업 파일은 보존됩니다.","강제 중단",MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)!=DialogResult.Yes)return;
+        stopping=true; stop.Enabled=false; status.Text="작업과 VM을 강제 중단하고 있습니다...";
+        int workerId=worker.Id;
+        var background=new BackgroundWorker();
+        background.DoWork+=delegate(object sender,DoWorkEventArgs e){
+            string script=Path.Combine(basePath,"StopBuild.ps1");
+            string ps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),@"WindowsPowerShell\v1.0\powershell.exe");
+            using(var p=new Process {StartInfo=new ProcessStartInfo(ps,"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \""+script+"\" -JobDirectory \""+jobPath+"\" -WorkerId "+workerId){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true}}){
+                var errors=new StringBuilder();p.ErrorDataReceived+=delegate(object s,DataReceivedEventArgs ev){if(ev.Data!=null)errors.AppendLine(ev.Data);};
+                p.Start();p.BeginErrorReadLine();p.StandardOutput.ReadToEnd();p.WaitForExit();if(p.ExitCode!=0)throw new Exception(errors.ToString());
+            }
+        };
+        background.RunWorkerCompleted+=delegate(object sender,RunWorkerCompletedEventArgs e){
+            background.Dispose();stopping=false;
+            if(e.Error!=null){stop.Enabled=true;status.Text="강제 중단에 실패했습니다.";MessageBox.Show(this,e.Error.Message);return;}
+            poll.Stop();finished=true;status.Text="사용자 요청으로 강제 중단했습니다. 미완성 결과는 사용하지 마세요.";output.AppendText(Environment.NewLine+status.Text);
+        };
+        background.RunWorkerAsync();
     }
     bool ChooseResources() {
         int totalGB=0, availableGB=0, cpus=Environment.ProcessorCount;

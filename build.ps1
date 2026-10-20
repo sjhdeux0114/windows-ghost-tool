@@ -4,7 +4,7 @@ $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 Push-Location $PSScriptRoot
 try {
     # Windows PowerShell 5.1 requires a BOM for scripts with Korean text.
-    foreach ($scriptName in @('VmWizard.ps1','AutoBuild.ps1','GuestSeal.ps1','VmHistory.ps1')) {
+    foreach ($scriptName in @('VmWizard.ps1','AutoBuild.ps1','GuestSeal.ps1','VmHistory.ps1','StopBuild.ps1')) {
         $wizard = Join-Path $PSScriptRoot $scriptName
         $wizardText = [IO.File]::ReadAllText($wizard)
         [IO.File]::WriteAllText($wizard, $wizardText, (New-Object Text.UTF8Encoding($true)))

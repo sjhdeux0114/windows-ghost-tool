@@ -7,6 +7,8 @@ function Test-AuditReady($setupInProgress,$oobeInProgress,[bool]$desktop,[string
     return ($setupInProgress -eq 0 -and $desktop -and ($oobeInProgress -eq 0 -or $imageState -eq 'IMAGE_STATE_SPECIALIZE_RESEAL_TO_AUDIT'))
 }
 if ($ValidateOnly) { return }
+$sealMutex=New-Object Threading.Mutex($false,'Local\GhostAutoSealWorker')
+if (-not $sealMutex.WaitOne(0)) { $sealMutex.Dispose(); exit 0 }
 try {
     if (-not (Test-Path -LiteralPath 'C:\GhostBuild\Architecture.txt')) { throw 'Missing reference VM marker.' }
     Note 'Waiting for audit setup to finish.'
@@ -29,8 +31,15 @@ try {
     if ($architecture -ne 'amd64' -and $architecture -ne 'x86') { throw 'Invalid architecture.' }
     $xml='<unattend xmlns="urn:schemas-microsoft-com:unattend"><settings pass="oobeSystem"><component name="Microsoft-Windows-Deployment" processorArchitecture="'+$architecture+'" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"><Reseal><Mode>OOBE</Mode></Reseal></component></settings></unattend>'
     $xml | Set-Content -LiteralPath 'C:\Windows\Temp\GhostFinalize.xml' -Encoding UTF8
-    & schtasks.exe /Delete /TN GhostAutoSeal /F | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot remove build task.' }
+    $previousPreference=$ErrorActionPreference
+    $ErrorActionPreference='Continue'
+    $taskQuery=@(& schtasks.exe /Query /TN GhostAutoSeal 2>&1)
+    $taskCode=$LASTEXITCODE
+    $ErrorActionPreference=$previousPreference
+    if ($taskCode -eq 0) {
+        & schtasks.exe /Delete /TN GhostAutoSeal /F | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot remove build task.' }
+    } else { Note 'Scheduled task is absent; continuing the independent sealing worker.' }
     Note 'Starting Sysprep generalize / OOBE / shutdown.'
     $p=Start-Process -FilePath 'C:\Windows\System32\Sysprep\Sysprep.exe' -ArgumentList '/generalize /oobe /shutdown /quiet /unattend:C:\Windows\Temp\GhostFinalize.xml' -PassThru
     $p.WaitForExit()
@@ -39,4 +48,4 @@ try {
     Note ('FAILED: '+$_.Exception.Message)
     ($_ | Format-List * -Force | Out-String) | Set-Content -LiteralPath 'C:\GhostBuild\error-details.txt'
     exit 1
-}
+} finally { $sealMutex.ReleaseMutex(); $sealMutex.Dispose() }

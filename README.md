@@ -38,7 +38,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -OutputName GhostImageAppFix.exe
 ```
 
-Windows에 포함된 .NET Framework C# 컴파일러를 사용합니다. EXE와 함께 `AutoBuild.ps1`, `GuestSeal.ps1`, `VmHistory.ps1`, 별도로 준비한 `Ghost64.exe`를 같은 폴더에 두세요. `VmWizard.ps1`은 별도 수동 VM 준비 도구입니다.
+Windows에 포함된 .NET Framework C# 컴파일러를 사용합니다. EXE와 함께 `AutoBuild.ps1`, `GuestSeal.ps1`, `VmHistory.ps1`, `StopBuild.ps1`, 별도로 준비한 `Ghost64.exe`를 같은 폴더에 두세요. `VmWizard.ps1`은 별도 수동 VM 준비 도구입니다.
 
 ## 사용 방법
 
@@ -52,7 +52,9 @@ Windows에 포함된 .NET Framework C# 컴파일러를 사용합니다. EXE와 �
 
 Windows 7 및 x86은 BIOS/MBR, Windows 10 x64는 UEFI/GPT를 사용합니다. Windows 11은 UEFI와 가상 TPM을 사용합니다. Pro/Professional 에디션이 있으면 우선 선택합니다. ARM, Windows Server, 분할 SWM은 지원하지 않습니다. 네트워크 연결·Windows 업데이트·별도 앱 설치·정품 인증은 자동화하지 않습니다.
 
-감사 모드에서 별도 SYSTEM 예약 작업으로 봉인 스크립트를 실행합니다. VM 종료만으로 성공을 판단하지 않고 `IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE` 상태를 확인합니다. 설치/Sysprep 대기 제한은 120분이며 시간 초과 시 VM을 강제 종료하지 않습니다.
+감사 모드에서 별도 SYSTEM 예약 작업으로 봉인 스크립트를 실행합니다. 실행 요청 후 봉인 로그가 생성되지 않으면 별도 프로세스로 시작을 보완합니다. 감사 모드의 설치 상태를 확인하므로 `OOBEInProgress=1`만으로 무한 대기하지 않습니다. VM 종료만으로 성공을 판단하지 않고 `IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE` 상태를 확인합니다. 설치/Sysprep 대기 제한은 120분이며 시간 초과 시 VM을 강제 종료하지 않습니다.
+
+진행 창의 **강제 중단**은 확인 후 해당 빌드 프로세스·자식 프로세스·작업 VM만 중단합니다. VM 전원을 강제로 끄므로 미완성 결과는 사용할 수 없습니다. 작업 파일은 남겨 두며 `가상 윈도우 내역`에서 별도로 삭제할 수 있습니다. 강제 중단된 작업은 정상 완료나 이미지 생성 대상으로 취급하지 않습니다.
 
 BCDBoot의 BCD 하이브 충돌(종료 코드 183) 시 작업 폴더에 별도 BCD를 구성하여 해당 VM의 EFI 파티션에 배치합니다. 호스트 BCD 하이브를 해제하거나 수정하지 않습니다.
 
@@ -85,6 +87,7 @@ VM 등록·가상 디스크·변환 파일·해당 작업 폴더의 로그와 �
 | `AutoBuildForm.cs` | ISO·저장 위치·VM 사양 선택, 진행 표시 |
 | `AutoBuild.ps1` | ISO 판별, VM 준비, 봉인 상태 검증, Ghost 생성·검사 |
 | `GuestSeal.ps1` | VM 내부 초기 설정 대기, Sysprep |
+| `StopBuild.ps1` | 해당 빌드 프로세스·자식 프로세스·작업 VM의 강제 중단 |
 | `RestoreForm.cs` | 이미지 검사, 물리 디스크 복원 |
 | `VmHistoryForm.cs`, `VmHistory.ps1` | 내역 목록, VM·작업 파일 삭제 |
 | `VmWizard.ps1` | 별도 수동 VM 준비 도구 |
@@ -96,6 +99,7 @@ VM 등록·가상 디스크·변환 파일·해당 작업 폴더의 로그와 �
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-AutoBuild.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-VmHistory.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-StopBuild.ps1
 
 $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 & $csc /nologo /target:exe /platform:x64 /out:tests\SafetyTests.exe /main:SafetyTests /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Management.dll /reference:System.Web.Extensions.dll GhostImageApp.cs AutoBuildForm.cs RestoreForm.cs VmHistoryForm.cs tests\SafetyTests.cs
