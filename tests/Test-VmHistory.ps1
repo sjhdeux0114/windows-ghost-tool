@@ -30,9 +30,11 @@ try {
     @'
 function Get-VM { [pscustomobject]@{Id=[guid]$env:VMH_TEST_ID;State=$env:VMH_TEST_STATE} }
 function Get-VMHardDiskDrive { param($VM) [pscustomobject]@{Path=(Join-Path $env:VMH_TEST_JOB 'Windows.vhdx')} }
-function Get-VHD { param($Path) [pscustomobject]@{Attached=$false} }
+function Get-VHD { param($Path) [pscustomobject]@{Attached=($env:VMH_TEST_ATTACHED -eq '1')} }
+function Get-Disk { [pscustomobject]@{IsBoot=$false;IsSystem=$false} }
+function Dismount-VHD { param($Path) Set-Content (Join-Path $env:VMH_TEST_ROOT 'disk-detached.txt') $Path }
 function Remove-VM { param($VM,[switch]$Force) Set-Content (Join-Path $env:VMH_TEST_ROOT 'vm-removed.txt') 'removed' }
-Export-ModuleMember -Function Get-VM,Get-VMHardDiskDrive,Get-VHD,Remove-VM
+Export-ModuleMember -Function Get-VM,Get-VMHardDiskDrive,Get-VHD,Get-Disk,Dismount-VHD,Remove-VM
 '@ | Set-Content (Join-Path $modulePath 'Hyper-V.psm1')
     $originalModulePath=$env:PSModulePath
     try {
@@ -48,11 +50,15 @@ Export-ModuleMember -Function Get-VM,Get-VMHardDiskDrive,Get-VHD,Remove-VM
         $blockedCode=$LASTEXITCODE; $ErrorActionPreference=$prior
         if($blockedCode -ne 1 -or -not(Test-Path $job) -or (Test-Path (Join-Path $testRoot 'vm-removed.txt'))){throw 'Running VM deletion was not blocked'}
         $env:VMH_TEST_STATE='Off'
+        $env:VMH_TEST_ATTACHED='1'
+        & $ps -NoProfile -ExecutionPolicy Bypass -File $backend -Action Detach -Root $testRoot -HistoryRoots (Join-Path $testRoot 'AutoBuilds') -EntryBase64 $encoded
+        if($LASTEXITCODE -ne 0 -or -not(Test-Path $job) -or -not(Test-Path (Join-Path $testRoot 'disk-detached.txt')) -or (Test-Path (Join-Path $testRoot 'vm-removed.txt'))){throw 'Detach did not preserve VM and files'}
+        $env:VMH_TEST_ATTACHED=''
         & $ps -NoProfile -ExecutionPolicy Bypass -File $backend -Action Delete -Root $testRoot -HistoryRoots (Join-Path $testRoot 'AutoBuilds') -EntryBase64 $encoded
         if($LASTEXITCODE -ne 0 -or (Test-Path $job) -or -not(Test-Path (Join-Path $testRoot 'vm-removed.txt')) -or -not(Test-Path $keptImage)){throw 'Owned deletion or GHO preservation failed'}
     } finally {
         $env:PSModulePath=$originalModulePath
-        foreach($name in @('VMH_TEST_ROOT','VMH_TEST_JOB','VMH_TEST_ID','VMH_TEST_STATE')){Remove-Item -LiteralPath ('Env:\'+$name) -ErrorAction SilentlyContinue}
+        foreach($name in @('VMH_TEST_ROOT','VMH_TEST_JOB','VMH_TEST_ID','VMH_TEST_STATE','VMH_TEST_ATTACHED')){Remove-Item -LiteralPath ('Env:\'+$name) -ErrorAction SilentlyContinue}
     }
     'PASS: owned history discovery, foreign app exclusion, disk path boundary, junction deletion guard, running VM block, VM unregister + file deletion, external GHO preserved.'
 } finally {

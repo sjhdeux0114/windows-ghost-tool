@@ -1,4 +1,4 @@
-﻿param([ValidateSet('List','Delete')][string]$Action='List',[string]$Root=$PSScriptRoot,[string]$EntryBase64='',[string[]]$HistoryRoots=@(),[switch]$ValidateOnly)
+﻿param([ValidateSet('List','Delete','OpenVm','Detach')][string]$Action='List',[string]$Root=$PSScriptRoot,[string]$EntryBase64='',[string[]]$HistoryRoots=@(),[switch]$ValidateOnly)
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false)
 function Full([string]$p) { [IO.Path]::GetFullPath($p).TrimEnd('\') }
@@ -66,6 +66,15 @@ try {
         exit 0
     }
     $target=Full ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($EntryBase64)))
+    if($Action -eq 'OpenVm'){
+        $matches=@(Entries | Where-Object Path -eq $target)
+        if($matches.Count -ne 1 -or -not $matches[0].Id){throw '등록된 VM이 없습니다. 디스크 위치 열기로 작업 파일을 확인하세요.'}
+        Import-Module Hyper-V
+        $vm=Get-VM -Id ([guid]$matches[0].Id)
+        Start-Process -FilePath "$env:WINDIR\System32\vmconnect.exe" -ArgumentList @('localhost','-G',$vm.Id.ToString()) -WindowStyle Normal
+        'VM 연결 창을 열었습니다. VM 전원 상태는 변경하지 않았습니다.'
+        exit 0
+    }
     $mutex=New-Object Threading.Mutex($false,'Local\GhostImageAppVmWizard')
     $locked=$mutex.WaitOne(0)
     if(-not $locked){throw '가상 Windows 생성 작업이 진행 중입니다. 완료 후 삭제하세요.'}
@@ -76,7 +85,7 @@ try {
         $entry=$matches[0]
         NoLinks $target
         CheckTree $target
-        if(@(Get-ChildItem -LiteralPath $target -Recurse -File | Where-Object Extension -in @('.gho','.ghs')).Count -gt 0){throw '작업 폴더 안에 GHO 이미지가 있습니다. 이미지를 다른 폴더로 옮긴 뒤 삭제하세요.'}
+        if($Action -eq 'Delete' -and @(Get-ChildItem -LiteralPath $target -Recurse -File | Where-Object Extension -in @('.gho','.ghs')).Count -gt 0){throw '작업 폴더 안에 GHO 이미지가 있습니다. 이미지를 다른 폴더로 옮긴 뒤 삭제하세요.'}
         Import-Module Hyper-V
         $vms=@(Get-VM)
         $owners=@()
@@ -91,6 +100,20 @@ try {
             }
         }
         $diskFiles=@(Get-ChildItem -LiteralPath $target -Recurse -File | Where-Object Extension -in @('.vhd','.vhdx','.avhd','.avhdx'))
+        if($Action -eq 'Detach'){
+            $attached=@()
+            foreach($file in $diskFiles){
+                $v=Get-VHD -Path $file.FullName
+                if($v.Attached){
+                    $physical=@($v | Get-Disk)
+                    if($physical.Count -ne 1 -or $physical[0].IsBoot -or $physical[0].IsSystem){throw '시스템 또는 확인할 수 없는 디스크는 연결 해제할 수 없습니다.'}
+                    $attached+=$file.FullName
+                }
+            }
+            foreach($path in $attached){Dismount-VHD -Path $path -ErrorAction Stop}
+            '가상 디스크 연결 해제를 완료했습니다. 이제 삭제하기를 사용할 수 있습니다.'
+            exit 0
+        }
         foreach($file in $diskFiles){$v=Get-VHD -Path $file.FullName;if($v.Attached){throw '가상 디스크가 연결되어 있습니다. 연결 해제 후 삭제하세요.'}}
         foreach($vm in $owners){Remove-VM -VM $vm -Force}
         # Exact, revalidated generated directory only. No output GHO outside this folder is removed.
