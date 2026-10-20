@@ -41,6 +41,7 @@ easy/
 /RetryBuild.ps1
 /RetryBuildOnC.ps1
 /RetryDiagnostic.ps1
+/retry-stop.ps1
 /TestBcdAndRetry.ps1
 /RestartCurrent.ps1
 /restart-error.txt
