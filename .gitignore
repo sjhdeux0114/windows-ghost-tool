@@ -1,0 +1,53 @@
+# Build outputs and third-party executables
+*.exe
+*.dll
+*.pdb
+*.msi
+bin/
+obj/
+# Licensed media and generated disk images
+*.iso
+*.wim
+*.esd
+*.gho
+*.ghs
+*.vhd
+*.vhdx
+*.avhd
+*.avhdx
+*.vmdk
+*.bcd
+# Local VM state, logs and machine-specific recovery tools
+AutoBuilds/
+VirtualMachines/
+RestoreLogs/
+FailedBuildLogs/
+RetryGuestLogs/
+retry-inspect/
+easy/
+*.log
+*.jsonl
+/bcd-*.txt
+/bcd-*.json
+/retry-*.txt
+/retry-*.json
+/resume-*.txt
+/cleanup-*.txt
+/vm-history-roots.txt
+/vm-project.json
+/CleanupAndRetry.ps1
+/DiagnoseBcdRetry.ps1
+/ResumeCapture.ps1
+/RetryBuild.ps1
+/RetryBuildOnC.ps1
+/RetryDiagnostic.ps1
+/TestBcdAndRetry.ps1
+# Local configuration and credentials
+.vs/
+.vscode/
+.codex/
+.agents/
+.aws/
+.env
+.env.*
+*.user
